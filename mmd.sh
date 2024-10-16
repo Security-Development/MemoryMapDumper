@@ -10,7 +10,7 @@ trap 'kill $!; exit' SIGINT
 
 usage() {
     clear
-    echo "       MMB(Memory Map Dump)      "
+    echo "    MMB(Memory Map Dump) v0.1.0  "
     echo "|-------------------------------|"
     echo "| 1) Memory Dump Task Run       |"
     echo "| 2) Merge Task Run             |"
