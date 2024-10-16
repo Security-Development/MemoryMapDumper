@@ -1,14 +1,25 @@
 #!/bin/bash
 
-SCRIPT_PATH="$0"
+SO_FIXER=/Volumes/case_sensitive/tools/SoFixer64
+USAGE_SLEEP_TIME=1.5
 target_pid=""
+target_device=""
+
 
 trap 'kill $!; exit' SIGINT
 
-echo "MMB(Memory Map Dump)"
-echo "$SCRIPT_PATH <device_name> <pid> <region_name>"
+usage() {
+    clear
+    echo "       MMB(Memory Map Dump)      "
+    echo "|-------------------------------|"
+    echo "| 1) Memory Dump Task Run       |"
+    echo "| 2) Merge Task Run             |"
+    echo "| 3) SO FIX                     |"
+    echo "| 4) usage                      |"
+    echo "|-------------------------------|"
+}
 
-function show_progress() {
+show_progress() {
     while true; do
         printf "Dumping"
         for i in {1..5}; do
@@ -41,7 +52,7 @@ input_pid() {
                         target_pid="$(adb -s "$target_device" shell pidof "$target_pid")"
                         if [[ -z "$target_pid" ]]; then
                             echo "No process found with name: $target_pid"
-                            exit 1
+                            return
                         fi
                     fi
                 break
@@ -65,7 +76,7 @@ input_pid() {
     done
 }
 
-entry() {
+dump_task() {
     clear
     while true; do
         device_names=()
@@ -148,26 +159,112 @@ entry() {
         if [ "$target_region" == "$path" ]; then
             start_address_decimal=$(printf "%d" 0x"$start_address")
             map_size=$((0x$end_address-0x$start_address))
-            echo "--------[$target_region Found!!!]--------"
+            echo "Found $target_region !!!"
             target_map_list+=("$path,$start_address_decimal,$map_size")
         fi
     done < "$temp_file"
 
     rm "$temp_file"
 
-    echo "[ Memory Dump Task run ]"
+    dumped_files=()
 
     for item in "${target_map_list[@]}"; do
         path=$(echo "$item" | cut -d',' -f1)
+        base_name=$(basename "$path")
         address=$(echo "$item" | cut -d',' -f2)
         size=$(echo "$item" | cut -d',' -f3)
         echo "Path: ${path}"
         show_progress & 
-        adb -s "${target_device}" shell su -c "dd if=/proc/${target_pid}/mem skip=${address} count=${size} bs=1" > "$(basename "$path")_${count}.bin"
+        disown
+        adb -s "${target_device}" shell su -c "dd if=/proc/${target_pid}/mem skip=${address} count=${size} bs=1" > "${base_name}_${count}.bin"
         kill $!
-        tput el
+        tput el 
         echo "Done."
+        dumped_files+=("${base_name}_${count}.bin")
         count=$((count + 1)) 
+    done
+    sleep $USAGE_SLEEP_TIME
+    usage
+    target_pid=""
+    target_device=""
+}
+
+merge_task() {
+    merge_target_files=()
+
+    echo "To merge [app_process64_0.so, app_process64_1.so], please enter app_process64:"
+    echo -n "Input Path > "
+    read -r target_name
+
+    echo "# Files to be merged"
+    echo "----------------------------"
+    for file in "${target_name}_"[0-9]*.bin; do
+        if [[ -e $file ]]; then
+            echo "+ $file"
+            merge_target_files+=("$file")
+        fi
+    done
+
+    if [ ! ${#merge_target_files[@]} -gt 0 ]; then
+        echo " (Not Found)"
+    fi
+    echo "----------------------------"
+
+
+    if [ ${#merge_target_files[@]} -gt 0 ]; then
+        base_name="${target_name}_merged"
+        echo "Merging files: [ ${merge_target_files[*]} ]"
+        cat "${merge_target_files[@]}" > "${base_name}.bin"
+        echo "Merged into ${base_name}.bin"
+    else
+        echo "No matching files found"
+    fi
+
+    sleep $USAGE_SLEEP_TIME
+    usage
+}
+
+so_fix_task() {
+    echo -n "Input path > "
+    read -r target_path
+
+    if [ -e "$target_path" ]; then
+        echo -n "Input page size > "
+        read -r page_size
+
+        if [[ "$page_size" =~ ^0x[0-9a-fA-F]+$ ]]; then
+            page_size=$((page_size))
+        elif [[ ! "$page_size" =~ ^[0-9]+$ ]]; then
+            echo "Error: Page size must be a number (decimal or hexadecimal)."
+            return
+        fi
+
+        echo "Starting SO fix process for '$target_path' with page size: $page_size..."
+        $SO_FIXER -s "$target_path" -o "fixed_$target_path" -m 0x0 -d -a "$page_size"
+
+    else
+        echo "Error: File not found."
+    fi
+    
+    sleep $USAGE_SLEEP_TIME
+    usage
+}
+
+entry() {
+    usage
+    while true;do 
+        echo -n " > "
+        read -r option
+        if [ "$option" == "1" ];then 
+            dump_task
+        elif [ "$option" == "2" ];then
+            merge_task
+        elif [ "$option" == "3" ];then
+            so_fix_task
+        elif [ "$option" == "4" ];then
+            usage
+        fi
+
     done
 }
 
